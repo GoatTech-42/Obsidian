@@ -9,3 +9,4 @@ Owner: one dedicated ongoing worker, with independent review on substantive chan
 5. Structure fuzzing with minimized failures, independent vectors for each baseline, dependency advisories and key-copy/zeroization review. Budget local jobs and stop on resource saturation.
 6. Build separate KEM/signature research only after exact functional requirements are stated, not as a symmetric-encryption shortcut.
 7. Investigate candidate novelty in the literature before naming a design contribution. New primitives require expert cryptanalysis and long scrutiny, not an unattended edit loop.
+
