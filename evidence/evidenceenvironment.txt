@@ -1,7 +1,0 @@
-Obsidian first benchmark, 2026-10-26
-Rust 1.99.1, LLVM 23.1.1, x86_64-unknown-linux-gnu
-1 visible vCPU, Intel Xeon Platinum 8375C @ 2.90GHz
-Release mode, LTO, codegen-units=1, opt-level=3
-Compiler default target; library runtime feature detection allowed.
-No CPU pinning, no explicit isolation, no warm-up, single run.
-Not a universal ranking. Machine scheduling and hardware acceleration affect results.
