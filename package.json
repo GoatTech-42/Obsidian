@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "test:web": "node research/browser-qa.cjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.1"
+  },
+  "name": "obsidian-research",
+  "type": "module"
+}
