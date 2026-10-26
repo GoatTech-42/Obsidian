@@ -1,4 +1,0 @@
-using deprecated parameters for the initialization function; pass a single object instead
-PASS: AES-GCM fixture independently reproduced via WebCrypto
-PASS: 4000-case random fuzz (half valid-magic) (accepted=0 panics=0)
-PASS: 2000-case structured corruption (accepted=0 panics=0)
