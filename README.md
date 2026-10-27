@@ -15,6 +15,7 @@ rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.105 --locked
 cargo build --release --locked --target wasm32-unknown-unknown
 wasm-bindgen target/wasm32-unknown-unknown/release/obsidian_research.wasm --target web --out-dir web/pkg
+python3 scripts/scrub-wasm-return.py
 python3 -m http.server --directory web 8080 --bind 127.0.0.1
 ```
 
@@ -40,3 +41,12 @@ Shows recovery when the same key and nonce are reused, including in R1. UI gener
 No external telemetry, no secrets in source, no CI/cloud spend, no server deployment included. Independent review and custom-subdomain deployment are separate gates.
 
 Browser QA (requires Node, Python 3, Chrome): `npm ci --ignore-scripts && npm run test:web`. Set CHROME_PATH if Chrome is not at /usr/bin/google-chrome. Screenshots and a network/error/check receipt are written under evidence/. No external browser target is contacted by the test runner.
+
+After each `wasm-bindgen` command, run `python3 scripts/scrub-wasm-return.py`
+before serving or packaging `web/`. This pinned-generation check wipes the
+returned WASM plaintext allocation after copying it into JavaScript, including
+if that copy throws. It fails if the generated decrypt shape changes.
+It does not erase JavaScript/DOM strings or all stack/allocator copies, and it
+cannot protect keys or text from a compromised browser. Use test data only.
+
+With the local server running, run `node research/memory-regression.cjs http://127.0.0.1:8080` to check synthetic plaintext markers after the returned JS buffer is wiped. This checks exact full-marker retention only, not arbitrary key schedules or all memory copies.
