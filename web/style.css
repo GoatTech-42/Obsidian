@@ -33,3 +33,5 @@
 
 button{transition:border-color var(--t-fast) var(--ease),background-color var(--t-fast) var(--ease)}button:hover:not(:disabled){background:var(--surface-2)}#enc:hover:not(:disabled){background:var(--n-800)}#status.error{font-weight:600}#status.error::before{content:"[failed] ";}.finding{font-weight:600}#engine::before{content:"[engine] ";}::selection{background:var(--text);color:var(--bg)}
 nav a{display:inline-flex;align-items:center;min-height:44px}summary{min-height:44px}input{min-height:44px}
+
+.keyrow{grid-template-columns:minmax(0,1fr) auto auto}#key{min-width:0}@media(max-width:800px){.keyrow{grid-template-columns:1fr 1fr}#key{grid-column:1 / -1}}
