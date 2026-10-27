@@ -86,9 +86,14 @@ export function decrypt(key, envelope) {
     if (ret[3]) {
         throw takeFromExternrefTable0(ret[2]);
     }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
+    // Clear this returned plaintext allocation, not all browser memory.
+    const plaintextView = getArrayU8FromWasm0(ret[0], ret[1]);
+    try {
+        return plaintextView.slice();
+    } finally {
+        plaintextView.fill(0);
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
 }
 
 const EXPECTED_RESPONSE_TYPES = new Set(['basic', 'cors', 'default']);
