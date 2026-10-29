@@ -1,0 +1,8 @@
+# 12-bit key-alternating toy: clustering measurement (toy, independently reproduced for seed 0 and an 80-row audit; no cipher or full-width claim)
+Model: 4 parallel 3-bit S-boxes (x^3 over GF(8)), 12-bit state, independent uniform round keys, linear layer = random bit permutation or random invertible matrix, seeds 0-4 each, r=1..8, all 4095 sources, exact. Floor = 1/4095. Files: clus.py, clus3.py, out3_all.txt, table12.txt.
+Observed (not proved):
+- EDP, best trail and floor are reported separately. Margin convention (not a security threshold): ratio shown only if trail >= 4 x floor. Best trail values 2^-2r (observed identical across seeds; not a proved theorem here).
+- 4 x floor = 4/4095 = 9.768e-4. Trail 1/1024 gives trail/floor = 4095/1024 = 3.9990234375, a knife-edge 0.0244% below the convention, so r=5 (bit-perm) and r=3 (random layer) count as below margin by convention only. EDP/trail at bit-perm r=5 is still a valid global ratio: 7.55-14.25 (7.37e-3..1.392e-2 over 9.766e-4). EDP there is about 30-57 x floor.
+- Bit-permutation layer: EDP/trail 1, 2, 3-4, 5-6.25 for r=1-4 (above margin). Later rounds below margin; EDP remains 3 to 35 x floor at r=6..8 (concentration over uniform).
+- Random layer: EDP/trail 1 at r=1,2; r=3 EDP 1.6e-3..2.9e-3 (about 6.5-12 x floor); from r=6 EDP is within printed precision of uniform; at r=5 it is about 1.1 x floor, definitely above floor. This is "approximately uniform at table precision", not "no concentration" and not "no clustering".
+Limits: two widths (9, 12 bit), one S-box, independent-key model, five seeds per layer, no linear/algebraic analysis, no full-width inference.
