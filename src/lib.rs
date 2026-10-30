@@ -152,10 +152,16 @@ pub fn open(key: &[u8], envelope: &[u8]) -> Result<Vec<u8>, Error> {
     }
 }
 #[wasm_bindgen]
-pub fn encrypt(mode: u8, key: &[u8], nonce: &[u8], plain: &[u8]) -> Result<Vec<u8>, JsValue> {
-    seal(mode, key, nonce, plain).map_err(|e| JsValue::from_str(&format!("{e:?}")))
+pub fn encrypt(mode: u8, key: Vec<u8>, nonce: Vec<u8>, plain: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+    // Take ownership of the glue-passed copies so secret inputs are wiped
+    // while owned, before their allocations are released: Zeroizing zeroes
+    // the buffer on drop, before the Vec frees it, on success and error paths.
+    let key = Zeroizing::new(key);
+    let plain = Zeroizing::new(plain);
+    seal(mode, &key, &nonce, &plain).map_err(|e| JsValue::from_str(&format!("{e:?}")))
 }
 #[wasm_bindgen]
-pub fn decrypt(key: &[u8], envelope: &[u8]) -> Result<Vec<u8>, JsValue> {
-    open(key, envelope).map_err(|e| JsValue::from_str(&format!("{e:?}")))
+pub fn decrypt(key: Vec<u8>, envelope: Vec<u8>) -> Result<Vec<u8>, JsValue> {
+    let key = Zeroizing::new(key);
+    open(&key, &envelope).map_err(|e| JsValue::from_str(&format!("{e:?}")))
 }
