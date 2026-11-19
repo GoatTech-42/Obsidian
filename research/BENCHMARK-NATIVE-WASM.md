@@ -7,11 +7,14 @@ ranking across cryptographic jobs. Performance only: no security claim of any ki
 
 ## What was run
 
-- Native: `cargo run --release --locked --example bench_runs -- 7` (median, min,
-  max and spread over 7 runs; 200 operations per run for 64 and 4096 bytes, 12
-  for 1 MiB).
+- Native: `bench_runs` (median, min, max and spread over 7 runs; 200 operations
+  per run for 64 and 4096 bytes, 12 for 1 MiB). Each native CSV starts with the
+  `envelope_digest` lines built under the same flags as the run:
+  `{ cargo run -q --release --locked --example envelope_digest; cargo run -q --release --locked --example bench_runs -- 7; } > native_default.csv`
 - Wasm: `cargo build --release --locked --target wasm32-unknown-unknown`, then
-  `wasm-bindgen --target nodejs` (0.2.105) and `node scripts/bench_wasm.mjs <dir> 7`.
+  `wasm-bindgen --target nodejs` (0.2.105) into a directory that also holds a
+  `package.json` of `{"type":"commonjs"}`, and
+  `node scripts/bench_wasm.mjs <dir> 7 > wasm_node.csv`, which prints its own digest lines first.
   Same key, payload, nonce scheme, iteration counts and CSV columns. Every call
   also copies key, nonce, payload and result across the JS/wasm boundary, and the
   wasm exports zeroize their input copies; those costs are part of the wasm row.
@@ -19,10 +22,11 @@ ranking across cryptographic jobs. Performance only: no security claim of any ki
   runs include JIT time.
 - Same job check: `examples/envelope_digest.rs` and the first lines of
   `bench_wasm.mjs` print the SHA-256 of one fixed public test envelope per mode.
-  `scripts/compare_native_wasm.py` refuses to join CSVs whose digests or rows differ.
+  `scripts/compare_native_wasm.py` refuses to join CSVs whose digests or rows differ, that lack a digest for any of modes 0, 1 and 2, or that repeat a row or digest line (`python3 scripts/test_compare_native_wasm.py` covers these).
   All three paths produced identical digests (so the same bytes are being sealed).
-- Native armv8 AES: the same example built with
-  `RUSTFLAGS="--cfg aes_armv8 --cfg polyval_armv8 -C target-feature=+aes"`.
+- Native armv8 AES: the same two commands with
+  `RUSTFLAGS="--cfg aes_armv8 --cfg polyval_armv8 -C target-feature=+aes"` and a separate `--target-dir`,
+  written to `native_armv8_aes.csv`.
   The aes and polyval crates used here enable their ARMv8 code only with those
   flags, so the default native build on this aarch64 host runs the portable
   code for AES-GCM. A build with `--cfg aes_force_soft --cfg polyval_force_soft --cfg chacha20_force_soft`

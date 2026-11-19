@@ -16,10 +16,15 @@ def load(path):
         line = line.strip()
         if line.startswith("digest,"):
             _, mode, hexd = line.split(",")
+            if int(mode) in digests:
+                sys.exit(f"FAIL: {path}: duplicate digest line for mode {mode}")
             digests[int(mode)] = hexd
     body = [l for l in open(path) if not l.startswith("digest,")]
     for r in csv.DictReader(body):
-        rows[(int(r["mode"]), r["op"], int(r["bytes"]))] = r
+        key = (int(r["mode"]), r["op"], int(r["bytes"]))
+        if key in rows:
+            sys.exit(f"FAIL: {path}: duplicate row {key}")
+        rows[key] = r
     return digests, rows
 
 def main(paths):
@@ -27,9 +32,12 @@ def main(paths):
         sys.exit(__doc__)
     data = [(p, *load(p)) for p in paths]
     base_p, base_d, base_r = data[0]
+    for p, d, _ in data:   # every input, the baseline included, needs digests for modes 0, 1 and 2
+        if set(d) != {0, 1, 2}:
+            sys.exit(f"FAIL: {p}: envelope digests must cover modes 0, 1 and 2 exactly, got {sorted(d)}")
     for p, d, r in data[1:]:
-        if d != base_d or len(d) != 3:
-            sys.exit(f"FAIL: envelope digests differ or are missing ({base_p} vs {p}): not the same job")
+        if d != base_d:
+            sys.exit(f"FAIL: envelope digests differ ({base_p} vs {p}): not the same job")
         if set(r) != set(base_r):
             sys.exit(f"FAIL: row sets differ ({base_p} vs {p})")
     names = [p.rsplit("/", 1)[-1].removesuffix(".csv") for p, _, _ in data]
@@ -42,4 +50,5 @@ def main(paths):
         ratios = [f"{m / med[0]:.2f}" for m in med[1:]]
         print(f"{key[0]},{key[1]},{key[2]}," + ",".join(cells) + "," + ",".join(ratios))
 
-main(sys.argv[1:])
+if __name__ == "__main__":
+    main(sys.argv[1:])
