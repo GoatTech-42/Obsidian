@@ -22,7 +22,8 @@ ranking across cryptographic jobs. Performance only: no security claim of any ki
   runs include JIT time.
 - Same job check: `examples/envelope_digest.rs` and the first lines of
   `bench_wasm.mjs` print the SHA-256 of one fixed public test envelope per mode.
-  `scripts/compare_native_wasm.py` refuses to join CSVs whose digests or rows differ, that lack a digest for any of modes 0, 1 and 2, or that repeat a row or digest line (`python3 scripts/test_compare_native_wasm.py` covers these).
+  `scripts/compare_native_wasm.py` refuses to join CSVs whose digests or rows differ, that lack a digest for any of modes 0, 1 and 2, that repeat a row or digest line, or whose runs or iterations differ for any joined (mode, op, bytes) row (`python3 scripts/test_compare_native_wasm.py` covers these; it is run by hand, not in CI).
+  The digest check covers one fixed 64-byte test envelope per mode only, not every payload size that was timed.
   All three paths produced identical digests (so the same bytes are being sealed).
 - Native armv8 AES: the same two commands with
   `RUSTFLAGS="--cfg aes_armv8 --cfg polyval_armv8 -C target-feature=+aes"` and a separate `--target-dir`,
@@ -35,9 +36,46 @@ ranking across cryptographic jobs. Performance only: no security claim of any ki
 - Join: `python3 scripts/compare_native_wasm.py native_default.csv native_armv8_aes.csv wasm_node.csv`
   gives `research/native-vs-wasm-aarch64.csv`.
 
+## Exact flags for the measurement, and what is not recorded
+
+Only the following is recorded in the repository. It comes from this file as
+committed in 463bd85 (with the results) and 541e455, from `Cargo.toml` and from
+the scripts. No shell log, build log or raw per-path CSV of the measurement is
+committed, so these flags are as written down at the time, not independently
+checkable from the repository.
+
+- Release profile for every build (from `Cargo.toml`): `lto = true`,
+  `codegen-units = 1`, `opt-level = 3`, built with `--locked`.
+- Native default: no `RUSTFLAGS` recorded, so none beyond the defaults for the
+  aarch64 Linux target.
+- Native armv8 AES: `RUSTFLAGS="--cfg aes_armv8 --cfg polyval_armv8 -C target-feature=+aes"`,
+  with a separate `--target-dir` (its path is not recorded).
+- Wasm: `--target wasm32-unknown-unknown` with no `RUSTFLAGS` recorded, so no
+  `+simd128` or other target features were requested; then `wasm-bindgen --target nodejs` 0.2.105.
+- Runs and iterations: 7 runs (the `7` argument in the commands above);
+  iterations per run as set in `examples/bench_runs.rs` and `scripts/bench_wasm.mjs`
+  (200 for 64 and 4096 bytes, 12 for 1 MiB). The joined CSV does not carry
+  the runs or iterations columns, so the committed table alone cannot show them.
+- The earlier wording in 463bd85 gave the native command as
+  `cargo run --release --locked --example bench_runs -- 7`; 541e455 rewrote it
+  to the two-command form above. Both are descriptions written after the run.
+
+PMULL: with `--cfg polyval_armv8`, polyval 0.6.2 (in `Cargo.lock`) compiles
+its PMULL backend and picks it at run time when `cpufeatures` reports the
+`aes` feature, which that crate treats as implying PMULL; aes 0.8.4 likewise
+compiles its ARMv8 backend only under `--cfg aes_armv8`. Without those cfgs,
+both crates use their portable code on aarch64. That much follows from the
+crate sources. What the repository does not show: no disassembly, symbol check
+or run-time log confirms that the armv8 build actually executed the PMULL or AES
+instructions, and the timings do not separate AES from PMULL. The mode 2 speedup
+of the armv8 build is consistent with hardware-assisted code being used, but how
+much of it comes from PMULL (GHASH) versus AES instructions is unknown. The
+"CPU flags include aes, pmull" line below and the `force_soft` comparison
+mentioned above have no committed log or CSV behind them.
+
 ## Machine
 
-aarch64 Linux sandbox, 2 vCPU (CPU flags include aes, pmull, sha2), 8 GiB RAM,
+As written in 463bd85; no committed log records these. aarch64 Linux sandbox, 2 vCPU (CPU flags include aes, pmull, sha2), 8 GiB RAM,
 cargo 1.100.0, Node v22.23.5, wasm-bindgen 0.2.105. No pinning, no isolation, a
 shared machine. The earlier x86_64 numbers in `web/benchmark.csv` are a different
 machine and must not be mixed with these.
@@ -79,6 +117,8 @@ machine and must not be mixed with these.
 
 ## Reading these numbers
 
+- The 64-byte rows are noisy (for example wasm seal 64 in mode 0 has a 108.3%
+  spread, and wasm open 64 in mode 2 has 131.8%).
 - Spreads above about 10% (large for 64-byte rows and for some wasm rows) mean
   the median is only a rough guide on this shared machine. Treat ratios from
   such rows as indicative at best.
