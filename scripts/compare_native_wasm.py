@@ -4,7 +4,9 @@
 Usage: compare_native_wasm.py NATIVE.csv WASM.csv [OTHER.csv ...]
 Each input is the output of bench_runs (or bench_wasm.mjs), including the
 leading `digest,<mode>,<sha256>` lines. Fails if the digests differ or the
-rows do not match one to one, so only identical jobs are ever compared.
+rows do not match one to one, or if any joined (mode, op, bytes) row was
+measured with different runs or iterations on different paths, so only
+identical jobs are ever compared.
 Every output row is one job; there is no ranking across jobs or modes, and
 the ratio is only between the same job on two paths.
 """
@@ -21,7 +23,11 @@ def load(path):
             digests[int(mode)] = hexd
     body = [l for l in open(path) if not l.startswith("digest,")]
     for r in csv.DictReader(body):
-        key = (int(r["mode"]), r["op"], int(r["bytes"]))
+        try:
+            key = (int(r["mode"]), r["op"], int(r["bytes"]))
+            r["runs"], r["iterations"] = int(r["runs"]), int(r["iterations"])
+        except (KeyError, TypeError, ValueError):
+            sys.exit(f"FAIL: {path}: row needs integer mode, bytes, runs and iterations: {r}")
         if key in rows:
             sys.exit(f"FAIL: {path}: duplicate row {key}")
         rows[key] = r
@@ -40,6 +46,11 @@ def main(paths):
             sys.exit(f"FAIL: envelope digests differ ({base_p} vs {p}): not the same job")
         if set(r) != set(base_r):
             sys.exit(f"FAIL: row sets differ ({base_p} vs {p})")
+        for key in sorted(base_r):
+            for field in ("runs", "iterations"):
+                if r[key][field] != base_r[key][field]:
+                    sys.exit(f"FAIL: {field} differ for row {key} ({base_p}: {base_r[key][field]}, "
+                             f"{p}: {r[key][field]}): not the same job")
     names = [p.rsplit("/", 1)[-1].removesuffix(".csv") for p, _, _ in data]
     print("mode,op,bytes," + ",".join(f"{n}_median_mib_s,{n}_spread_pct" for n in names) +
           "," + ",".join(f"{n}_vs_{names[0]}" for n in names[1:]))
