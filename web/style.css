@@ -35,3 +35,13 @@ button{transition:border-color var(--t-fast) var(--ease),background-color var(--
 nav a{display:inline-flex;align-items:center;min-height:44px}summary{min-height:44px}input{min-height:44px}
 
 .keyrow{grid-template-columns:minmax(0,1fr) auto auto}#key{min-width:0}@media(max-width:800px){.keyrow{grid-template-columns:1fr 1fr}#key{grid-column:1 / -1}}
+
+
+/* quiet scrollbars + refined nav */
+html{scrollbar-width:thin;scrollbar-color:var(--n-300) transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--n-300);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+.tablewrap{scrollbar-width:thin;scrollbar-color:var(--n-300) transparent}
+nav a{text-decoration:none;color:var(--dim);transition:color var(--t-fast) var(--ease)}
+nav a:hover{color:var(--text-strong)}
