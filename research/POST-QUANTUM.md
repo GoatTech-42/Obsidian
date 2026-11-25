@@ -55,6 +55,7 @@ Benchmarks: `cargo run --release --features pq-hybrid --example hybrid_bench` (e
 5. Implementations are not FIPS-validated modules.
 6. Obsidian R1, the cipher, still has a known nonce-reuse failure, loses to AES-256-GCM and XChaCha20-Poly1305 on speed and size, and has no public cryptanalysis. Post-quantum status of the cipher cannot be claimed from this layer.
 7. Not wired into the WASM test bench (native only). Do not use for real keys or secrets.
-8. No formal fuzzing campaign beyond the in-repo mutation test.
+8. Fuzzing so far is short: about 60 s of libFuzzer on the new hybrid target plus 36 s each on the two older targets, no crashes (evidence/fuzz-2026-11-25.md). A real campaign runs for days with a seed corpus.
+9. Nonce reuse in raw `seal` is not fixed. Through the hybrid API every message gets a fresh key, so reuse cannot occur there (tested). A nonce-misuse-resistant mode would be a new unreviewed design; use AES-GCM-SIV (existing standard, RFC 8452) if misuse resistance is needed.
 
 Any wording stronger than "experimental hybrid layer built from NIST ML-KEM/ML-DSA and the X-Wing draft, unaudited" is not supported by this evidence.

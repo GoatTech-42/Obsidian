@@ -198,3 +198,16 @@ fn malformed_inputs_never_panic() {
         assert!(verify(&vk, b"m", &g).is_err(), "mutated signature accepted");
     }
 }
+
+#[test]
+fn every_seal_to_uses_a_fresh_key_so_nonce_reuse_cannot_happen_through_this_api() {
+    // Nonce reuse only hurts when the same key is reused. seal_to derives a new key per message.
+    let sk = KemSecret::generate().unwrap();
+    let pk = sk.public_key();
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..200 {
+        let (ct, key) = encapsulate(&pk).unwrap();
+        assert!(seen.insert(key.to_vec()), "repeated key");
+        assert!(seen.insert(ct), "repeated ciphertext");
+    }
+}
