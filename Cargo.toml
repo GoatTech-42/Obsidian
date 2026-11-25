@@ -21,11 +21,15 @@ ml-kem = { version = "=0.3.4", optional = true }
 ml-dsa = { version = "=0.1.2", optional = true }
 x25519-dalek = { version = "=3.0.0", optional = true }
 ed25519-dalek = { version = "=3.0.0", optional = true }
+sha3 = { version = "=0.12.0", optional = true }
+shake = { version = "=0.1.0", optional = true }
 getrandom4 = { package = "getrandom", version = "0.4", optional = true }
 
 [features]
 # Hybrid classical + post-quantum key establishment and signatures. Native only, off by default.
-pq-hybrid = ["dep:ml-kem", "dep:ml-dsa", "dep:x25519-dalek", "dep:ed25519-dalek", "dep:getrandom4", "ml-kem/getrandom", "ml-dsa/getrandom", "ml-kem/zeroize", "ml-dsa/zeroize"]
+pq-hybrid = ["dep:ml-kem", "dep:ml-dsa", "dep:x25519-dalek", "dep:ed25519-dalek", "dep:getrandom4", "dep:sha3", "dep:shake", "ml-kem/getrandom", "ml-dsa/getrandom", "ml-kem/zeroize", "ml-dsa/zeroize"]
+
+xwing-derand = ["pq-hybrid", "ml-kem/hazmat"]
 
 [dev-dependencies]
 serde_json = "1"
@@ -36,6 +40,14 @@ lto = true
 codegen-units = 1
 opt-level = 3
 
+[[test]]
+name = "hybrid"
+required-features = ["xwing-derand"]
+
 [[example]]
 name = "hybrid_bench"
+required-features = ["pq-hybrid"]
+
+[[example]]
+name = "hybrid_xcheck"
 required-features = ["pq-hybrid"]

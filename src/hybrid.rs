@@ -1,13 +1,19 @@
 //! Hybrid classical + post-quantum key establishment and signatures for Obsidian.
 //!
 //! Built only from existing, standardized primitives through the RustCrypto crates
-//! `ml-kem` (FIPS 203, ML-KEM-768), `ml-dsa` (FIPS 204, ML-DSA-65), `x25519-dalek` and
-//! `ed25519-dalek`. Nothing here is a new primitive.
+//! `ml-kem` (FIPS 203, ML-KEM-768), `ml-dsa` (FIPS 204, ML-DSA-65), `x25519-dalek`,
+//! `ed25519-dalek`, `sha3` and `shake`. Nothing here is a new primitive.
 //!
-//! The KEM is X25519 + ML-KEM-768 joined with HKDF-SHA256. It is in the style of X-Wing
-//! and the IETF hybrid drafts, but it is NOT X-Wing and the combiner is not standardized.
-//! An attacker has to break BOTH X25519 and ML-KEM-768 to learn the key. The signature is
-//! Ed25519 + ML-DSA-65 and BOTH must verify.
+//! KEM: this is X-Wing exactly as written in draft-connolly-cfrg-xwing-kem-11
+//! (X25519 + ML-KEM-768, SHA3-256 combiner, 32-byte decapsulation key expanded with
+//! SHAKE256). The X-Wing paper (https://eprint.iacr.org/2024/039) proves it IND-CCA
+//! secure if either X25519 (strong DH, ROM) or ML-KEM-768 is secure. The draft is an
+//! Independent Submission Internet-Draft, not an RFC or a NIST standard. We do not
+//! change it. Output matches the draft's published test vectors (tests/hybrid.rs).
+//!
+//! Signatures: Ed25519 + ML-DSA-65, BOTH must verify. This combination is our own
+//! simple "AND" wiring (no standard, no proof written for it beyond the argument in
+//! research/POST-QUANTUM.md).
 //!
 //! Not independently audited. The underlying crates state they are unaudited. Obsidian's
 //! own cipher is not what makes this layer post-quantum: a 256-bit symmetric key is
@@ -15,31 +21,31 @@
 //! exchange and signatures, and those come from ML-KEM and ML-DSA here.
 use crate::{open, seal, Error};
 use ed25519_dalek::{Signer as _, SigningKey as EdSigningKey, VerifyingKey as EdVerifyingKey};
-use hkdf::Hkdf;
 use ml_dsa::{MlDsa65, SigningKey as DsaSigningKey, VerifyingKey as DsaVerifyingKey};
 use ml_kem::{
     kem::{Decapsulate, Encapsulate},
     Ciphertext, DecapsulationKey, EncapsulationKey, KeyExport, MlKem768, Seed as KemSeed,
 };
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
+use shake::digest::{ExtendableOutput, Update, XofReader};
 use zeroize::Zeroizing;
 
-pub const X_LEN: usize = 32;
 pub const KEM_EK_LEN: usize = 1184;
 pub const KEM_CT_LEN: usize = 1088;
 pub const DSA_VK_LEN: usize = 1952;
 pub const DSA_SIG_LEN: usize = 3309;
 pub const ED_SIG_LEN: usize = 64;
-/// Public key: x25519(32) || ml-kem-768 encapsulation key(1184).
-pub const KEM_PK_LEN: usize = X_LEN + KEM_EK_LEN;
-/// KEM ciphertext: ephemeral x25519(32) || ml-kem-768 ciphertext(1088).
-pub const KEM_CT_TOTAL: usize = X_LEN + KEM_CT_LEN;
+/// X-Wing encapsulation key: ml-kem-768 encapsulation key(1184) || x25519(32).
+pub const KEM_PK_LEN: usize = KEM_EK_LEN + 32;
+/// X-Wing ciphertext: ml-kem-768 ciphertext(1088) || ephemeral x25519(32).
+pub const KEM_CT_TOTAL: usize = KEM_CT_LEN + 32;
 /// Signature: ed25519(64) || ml-dsa-65(3309).
 pub const SIG_LEN: usize = ED_SIG_LEN + DSA_SIG_LEN;
 /// Verifying key: ed25519(32) || ml-dsa-65(1952).
 pub const VK_LEN: usize = 32 + DSA_VK_LEN;
 
-const KEM_LABEL: &[u8] = b"Obsidian/hybrid-kem/v1/x25519+mlkem768";
+/// "\./" "/^\" = 5c2e2f2f5e5c
+const XWING_LABEL: [u8; 6] = [0x5c, 0x2e, 0x2f, 0x2f, 0x5e, 0x5c];
 const SIG_CTX: &[u8] = b"Obsidian/hybrid-sig/v1";
 
 #[derive(Debug, PartialEq)]
@@ -47,7 +53,8 @@ pub enum HybridError {
     Random,
     InvalidKey,
     InvalidCiphertext,
-    /// X25519 produced the all-zero output (low-order point).
+    /// X25519 produced the all-zero output (low-order point). The X-Wing draft does not
+    /// require this check; we add it as a stricter local policy.
     WeakPoint,
     InvalidSignature,
     Envelope(Error),
@@ -59,86 +66,114 @@ fn rand<const N: usize>() -> Result<Zeroizing<[u8; N]>, HybridError> {
     Ok(b)
 }
 
-fn combine(ss_pq: &[u8], ss_x: &[u8; 32], eph: &[u8; 32], rcpt: &[u8; 32], ek: &[u8], ct: &[u8]) -> Zeroizing<[u8; 32]> {
-    let mut ikm = Zeroizing::new(Vec::with_capacity(64));
-    ikm.extend_from_slice(ss_pq);
-    ikm.extend_from_slice(ss_x);
-    let mut info = Vec::new();
-    info.extend_from_slice(eph);
-    info.extend_from_slice(rcpt);
-    info.extend_from_slice(&Sha256::digest(ek));
-    info.extend_from_slice(ct);
-    let mut out = Zeroizing::new([0u8; 32]);
-    Hkdf::<Sha256>::new(Some(KEM_LABEL), &ikm)
-        .expand(&info, &mut *out)
-        .expect("32 bytes is a valid HKDF-SHA256 length");
-    out
+fn x25519_pub(sk: &[u8; 32]) -> [u8; 32] {
+    x25519_dalek::x25519(*sk, x25519_dalek::X25519_BASEPOINT_BYTES)
 }
 
-/// Long-term hybrid KEM secret: an x25519 secret and a 64-byte ML-KEM seed.
+/// X-Wing Combiner(ss_M, ss_X, ct_X, pk_X) = SHA3-256(ss_M || ss_X || ct_X || pk_X || label)
+fn combiner(ss_m: &[u8], ss_x: &[u8; 32], ct_x: &[u8; 32], pk_x: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+    let mut buf = Zeroizing::new(Vec::with_capacity(32 * 4 + 6));
+    buf.extend_from_slice(ss_m);
+    buf.extend_from_slice(ss_x);
+    buf.extend_from_slice(ct_x);
+    buf.extend_from_slice(pk_x);
+    buf.extend_from_slice(&XWING_LABEL);
+    Zeroizing::new(Sha3_256::digest(&*buf).into())
+}
+
+/// Long-term X-Wing decapsulation key: the 32-byte seed (draft section 5.2).
 pub struct KemSecret {
-    x: Zeroizing<[u8; 32]>,
-    seed: Zeroizing<[u8; 64]>,
+    sk: Zeroizing<[u8; 32]>,
+}
+
+/// expandDecapsulationKey: SHAKE256(sk, 96) -> ML-KEM seed (64) || x25519 secret (32).
+fn expand(sk: &[u8; 32]) -> (DecapsulationKey<MlKem768>, Zeroizing<[u8; 32]>, [u8; 32]) {
+    let mut xof = shake::Shake256::default();
+    xof.update(sk);
+    let mut r = xof.finalize_xof();
+    let mut buf = Zeroizing::new([0u8; 96]);
+    r.read(&mut *buf);
+    let dk = DecapsulationKey::<MlKem768>::from_seed(KemSeed::try_from(&buf[..64]).expect("64 bytes"));
+    let sk_x = Zeroizing::new(<[u8; 32]>::try_from(&buf[64..]).expect("32 bytes"));
+    let pk_x = x25519_pub(&sk_x);
+    (dk, sk_x, pk_x)
 }
 
 impl KemSecret {
     pub fn generate() -> Result<Self, HybridError> {
-        Ok(Self { x: rand::<32>()?, seed: rand::<64>()? })
+        Ok(Self { sk: rand::<32>()? })
     }
-    fn dk(&self) -> DecapsulationKey<MlKem768> {
-        DecapsulationKey::<MlKem768>::from_seed(KemSeed::try_from(&self.seed[..]).expect("64 bytes"))
+    /// Deterministic key from a 32-byte seed (GenerateKeyPairDerand). Use only for tests.
+    pub fn from_seed(seed: [u8; 32]) -> Self {
+        Self { sk: Zeroizing::new(seed) }
     }
+    /// 1216-byte public key: pk_M || pk_X.
     pub fn public_key(&self) -> Vec<u8> {
-        let xp = x25519_dalek::x25519(*self.x, x25519_dalek::X25519_BASEPOINT_BYTES);
-        let mut pk = xp.to_vec();
-        pk.extend_from_slice(&self.dk().encapsulation_key().to_bytes());
+        let (dk, _, pk_x) = expand(&self.sk);
+        let mut pk = dk.encapsulation_key().to_bytes().to_vec();
+        pk.extend_from_slice(&pk_x);
         pk
     }
-    /// Recover the 32-byte shared key from a hybrid KEM ciphertext.
+    /// Recover the 32-byte shared key from a 1120-byte X-Wing ciphertext.
+    /// A tampered ML-KEM part gives a different key (ML-KEM implicit rejection), not an error.
     pub fn decapsulate(&self, ct: &[u8]) -> Result<Zeroizing<[u8; 32]>, HybridError> {
         if ct.len() != KEM_CT_TOTAL {
             return Err(HybridError::InvalidCiphertext);
         }
-        let eph: [u8; 32] = ct[..32].try_into().unwrap();
-        let ct_pq = &ct[32..];
-        let ss_x = Zeroizing::new(x25519_dalek::x25519(*self.x, eph));
+        let ct_x: [u8; 32] = ct[KEM_CT_LEN..].try_into().unwrap();
+        let (dk, sk_x, pk_x) = expand(&self.sk);
+        let ss_x = Zeroizing::new(x25519_dalek::x25519(*sk_x, ct_x));
         if ss_x.iter().all(|b| *b == 0) {
             return Err(HybridError::WeakPoint);
         }
-        let dk = self.dk();
-        let c = Ciphertext::<MlKem768>::try_from(ct_pq).map_err(|_| HybridError::InvalidCiphertext)?;
-        let ss_pq = dk.decapsulate(&c);
-        let rcpt = x25519_dalek::x25519(*self.x, x25519_dalek::X25519_BASEPOINT_BYTES);
-        let ek = dk.encapsulation_key().to_bytes();
-        Ok(combine(ss_pq.as_slice(), &ss_x, &eph, &rcpt, &ek, ct_pq))
+        let c = Ciphertext::<MlKem768>::try_from(&ct[..KEM_CT_LEN]).map_err(|_| HybridError::InvalidCiphertext)?;
+        let ss_m = dk.decapsulate(&c);
+        Ok(combiner(ss_m.as_slice(), &ss_x, &ct_x, &pk_x))
     }
 }
 
-/// Encapsulate to a public key. Returns (ciphertext to send, 32-byte shared key).
-pub fn encapsulate(pk: &[u8]) -> Result<(Vec<u8>, Zeroizing<[u8; 32]>), HybridError> {
+fn parse_pk(pk: &[u8]) -> Result<(EncapsulationKey<MlKem768>, [u8; 32]), HybridError> {
     if pk.len() != KEM_PK_LEN {
         return Err(HybridError::InvalidKey);
     }
-    let rcpt: [u8; 32] = pk[..32].try_into().unwrap();
-    let ek_bytes = &pk[32..];
-    let key = ml_kem::Key::<EncapsulationKey<MlKem768>>::try_from(ek_bytes).map_err(|_| HybridError::InvalidKey)?;
+    let key = ml_kem::Key::<EncapsulationKey<MlKem768>>::try_from(&pk[..KEM_EK_LEN]).map_err(|_| HybridError::InvalidKey)?;
     let ek = EncapsulationKey::<MlKem768>::new(&key).map_err(|_| HybridError::InvalidKey)?;
-    let (ct_pq, ss_pq) = ek.encapsulate();
+    Ok((ek, pk[KEM_EK_LEN..].try_into().unwrap()))
+}
+
+/// Encapsulate to a public key. Returns (1120-byte ciphertext, 32-byte shared key).
+pub fn encapsulate(pk: &[u8]) -> Result<(Vec<u8>, Zeroizing<[u8; 32]>), HybridError> {
+    let (ek, pk_x) = parse_pk(pk)?;
+    let (ct_m, ss_m) = ek.encapsulate();
     let esk = rand::<32>()?;
-    let eph = x25519_dalek::x25519(*esk, x25519_dalek::X25519_BASEPOINT_BYTES);
-    let ss_x = Zeroizing::new(x25519_dalek::x25519(*esk, rcpt));
+    let ct_x = x25519_pub(&esk);
+    let ss_x = Zeroizing::new(x25519_dalek::x25519(*esk, pk_x));
     if ss_x.iter().all(|b| *b == 0) {
         return Err(HybridError::WeakPoint);
     }
-    let mut ct = eph.to_vec();
-    ct.extend_from_slice(ct_pq.as_slice());
-    let k = combine(ss_pq.as_slice(), &ss_x, &eph, &rcpt, ek_bytes, ct_pq.as_slice());
-    Ok((ct, k))
+    let mut ct = ct_m.as_slice().to_vec();
+    ct.extend_from_slice(&ct_x);
+    Ok((ct, combiner(ss_m.as_slice(), &ss_x, &ct_x, &pk_x)))
+}
+
+/// EncapsulateDerand from the draft (eseed = 32 bytes ML-KEM randomness || 32 bytes x25519 secret).
+/// Needs feature `xwing-derand`. For tests only: fixed randomness breaks the KEM.
+#[cfg(feature = "xwing-derand")]
+pub fn encapsulate_derand(pk: &[u8], eseed: &[u8; 64]) -> Result<(Vec<u8>, Zeroizing<[u8; 32]>), HybridError> {
+    let (ek, pk_x) = parse_pk(pk)?;
+    let m = ml_kem::B32::try_from(&eseed[..32]).expect("32 bytes");
+    let (ct_m, ss_m) = ek.encapsulate_deterministic(&m);
+    let esk: [u8; 32] = eseed[32..].try_into().unwrap();
+    let ct_x = x25519_pub(&esk);
+    let ss_x = Zeroizing::new(x25519_dalek::x25519(esk, pk_x));
+    let mut ct = ct_m.as_slice().to_vec();
+    ct.extend_from_slice(&ct_x);
+    Ok((ct, combiner(ss_m.as_slice(), &ss_x, &ct_x, &pk_x)))
 }
 
 /// Seal a message to a hybrid public key with an Obsidian envelope `mode`
 /// (0 = R1 research mode, 1 = XChaCha20-Poly1305, 2 = AES-256-GCM).
-/// Output: hybrid KEM ciphertext (1120 bytes) || Obsidian envelope.
+/// Output: X-Wing ciphertext (1120 bytes) || Obsidian envelope.
 /// The key is fresh per message, so the random nonce cannot collide with an earlier key.
 pub fn seal_to(pk: &[u8], mode: u8, plain: &[u8]) -> Result<Vec<u8>, HybridError> {
     let (mut out, key) = encapsulate(pk)?;

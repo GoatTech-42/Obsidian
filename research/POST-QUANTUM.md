@@ -1,33 +1,60 @@
 # Post-quantum key establishment and signatures for Obsidian
 
-Status: experimental, unaudited. Obsidian itself is NOT claimed to be post-quantum, secure, or better than AES-256-GCM or XChaCha20-Poly1305. This document says what the new `pq-hybrid` layer does and does not claim.
+Status: experimental, unaudited. Obsidian itself is NOT claimed to be post-quantum, secure, or better than AES-256-GCM or XChaCha20-Poly1305. This file says what the optional `pq-hybrid` layer does, what evidence exists, and which gates remain before any post-quantum claim could be made.
 
 ## Where the quantum risk actually is
 
-- A symmetric cipher with a 256-bit key (Obsidian's key size) is not the weak point. The best known quantum attack on symmetric keys (Grover) roughly halves the key bits, so 256 bits stays at about 128. That holds for AES-256 and for any well-designed 256-bit cipher, and it says nothing about whether Obsidian R1 is a good cipher (it is not shown to be one, see SECURITY.md and ATTACKS.md).
-- The weak points are public-key: key exchange (X25519, RSA, ECDH) and signatures (RSA, ECDSA, Ed25519). A large quantum computer running Shor's algorithm breaks all of them. No such machine exists today.
-- So "making Obsidian post-quantum" means pairing it with post-quantum key establishment and signatures. A new symmetric cipher cannot do this on its own.
+- A symmetric cipher with a 256-bit key is not the weak point. The best known quantum attack on symmetric keys (Grover) roughly halves the key bits, so 256 bits stays at about 128. That is true for AES-256 and for any well-designed 256-bit cipher. It says nothing about whether Obsidian R1 is a good cipher (it is not shown to be one, see SECURITY.md and ATTACKS.md).
+- The weak points are public-key: key exchange (X25519, ECDH, RSA) and signatures (RSA, ECDSA, Ed25519). A large quantum computer running Shor's algorithm breaks all of them. No such machine exists today; resource estimates keep falling.
+- So "pairing Obsidian with post-quantum" means pairing it with post-quantum key establishment and signatures. A new symmetric cipher cannot do this on its own.
 
-## What `src/hybrid.rs` adds (cargo feature `pq-hybrid`, native only, off by default)
+## What `src/hybrid.rs` is (cargo feature `pq-hybrid`, native only, off by default)
 
-All primitives are existing standards from the RustCrypto crates `ml-kem` 0.3.4, `ml-dsa` 0.1.2, `x25519-dalek` 3.0.0, `ed25519-dalek` 3.0.0. Nothing here is a new primitive.
+Only existing standards from RustCrypto crates: `ml-kem` 0.3.4, `ml-dsa` 0.1.2, `x25519-dalek` 3.0.0, `ed25519-dalek` 3.0.0, `sha3` 0.12.0, `shake` 0.1.0. No new primitive and no new combiner.
 
-- Key establishment: X25519 + ML-KEM-768 (FIPS 203). The two shared secrets, the ephemeral and recipient X25519 keys, a hash of the ML-KEM public key and the ML-KEM ciphertext go into HKDF-SHA256 to give one 32-byte key. Breaking the output needs breaking both halves. The combiner is in the style of X-Wing and the IETF hybrid drafts but it is not X-Wing and is not standardized. It needs review.
-- Signatures: Ed25519 + ML-DSA-65 (FIPS 204), both over the same domain-separated message. Both must verify. ML-DSA signs in deterministic mode (allowed by FIPS 204).
-- `seal_to` / `open_from`: encapsulate to a recipient key, then use the 32-byte key with an Obsidian envelope (mode 0 R1 research, mode 1 XChaCha20-Poly1305, mode 2 AES-256-GCM). The key is fresh per message. For anything real, use mode 1 or 2, not R1.
-- Why hybrid and not post-quantum only: ML-KEM and ML-DSA are young and lattice-based. Public cryptanalysis of lattice schemes is active (a HAWK key-recovery attack was published in July 2026, see https://www.anthropic.com/research/discovering-cryptographic-weaknesses; HAWK is a different scheme from ML-KEM/ML-DSA). Requiring the classical half too means a break of one side does not break the whole.
+### KEM: X-Wing, unchanged
+
+X25519 + ML-KEM-768 exactly as in draft-connolly-cfrg-xwing-kem-11 (https://datatracker.ietf.org/doc/draft-connolly-cfrg-xwing-kem/): 32-byte decapsulation key expanded with SHAKE256 to ML-KEM seed (64 bytes) and X25519 secret (32 bytes); shared secret = SHA3-256(ss_M || ss_X || ct_X || pk_X || 5c2e2f2f5e5c). Public key 1216 bytes, ciphertext 1120 bytes.
+
+- Security argument: the X-Wing paper (Barbosa, Connolly, Duarte, Kaiser, Schwabe, Varner, Westerbaan, https://eprint.iacr.org/2024/039) proves X-Wing is classically IND-CCA secure if the strong Diffie-Hellman assumption holds in the X25519 group (random oracle model), and post-quantum IND-CCA secure if ML-KEM-768 is IND-CCA secure and SHA3-256 is a secure PRF (standard model). In short: secure if either X25519 or ML-KEM-768 is secure. The authors stress this relies on the concrete choices and may not carry to other pairings.
+- We do not claim this proof is ours, and we do not modify the construction. An earlier version of this branch used our own HKDF-based combiner. It had no proof, so it was replaced.
+- The draft is an Independent Submission Internet-Draft. It is not an RFC and not a NIST standard.
+- One local addition: decapsulation/encapsulation reject an all-zero X25519 output (low-order point). The draft does not require it. It does not change outputs for honest inputs.
+- A tampered ML-KEM ciphertext yields a different key rather than an error (ML-KEM implicit rejection), as in the draft. `open_from` then fails on the Obsidian envelope authentication.
+
+### Signatures: Ed25519 AND ML-DSA-65 (our wiring, no standard)
+
+Both signatures are over the same domain-separated message; the combined signature is 3373 bytes and both halves must verify. ML-DSA signs in deterministic mode (permitted by FIPS 204). Informal argument only: producing a signature that verifies requires a valid forgery under BOTH independent keys, so the pair is unforgeable if either scheme is. We have not written this as a proof, we did not check it against the hybrid-signature literature, and it says nothing about stronger properties (strong unforgeability, key-substitution or binding properties). Treat it as a design choice that needs review.
+
+### Sealing
+
+`seal_to` / `open_from`: X-Wing encapsulate, then the 32-byte key seals with an Obsidian envelope (mode 0 R1 research, 1 XChaCha20-Poly1305, 2 AES-256-GCM). The key is fresh per message. For anything real use mode 1 or 2, not R1.
+
+### Why hybrid and not post-quantum only
+
+ML-KEM and ML-DSA are young lattice schemes under active cryptanalysis (for example Anthropic reported a key-recovery attack on HAWK, a different lattice signature candidate, https://www.anthropic.com/research/discovering-cryptographic-weaknesses). Requiring the classical half as well means a break of one side does not break the whole. Rumors in November 2026 about AI-found weaknesses in RSA or lattice schemes were unverified when this was written.
 
 ## Evidence in this repo
 
-- `tests/vectors/acvp-mlkem768-mldsa65.json`: NIST ACVP vectors (usnistgov/ACVP-Server, FIPS 203 ML-KEM-768 encapsulation 25, decapsulation 10, key generation 25; FIPS 204 ML-DSA-65 signature verification 30, with 24 expected-reject cases). All pass: `cargo test --locked --features pq-hybrid --test hybrid`. These check the third-party crates on this machine, not our combiner.
-- Our wiring tests: round trip, every-nth-byte tamper rejected in all three modes, wrong recipient rejected, both KEM halves change the key, low-order X25519 point rejected, signature rejected if either half is altered.
-- `cargo run --release --features pq-hybrid --example hybrid_bench`: sizes and single-run timings (see evidence/hybrid-bench.txt).
+| Check | What it covers | Result |
+| --- | --- | --- |
+| `tests/vectors/xwing-draft11.json` (official draft vectors, 3) | our X-Wing: key from seed, derandomized encapsulation, decapsulation | match |
+| `tests/vectors/acvp-mlkem768-mldsa65.json` (NIST ACVP, usnistgov/ACVP-Server) | ML-KEM-768 encapsulation 25, decapsulation 10, keygen 25; ML-DSA-65 verify 30 (24 expected rejects) | match |
+| `scripts/xcheck_hybrid.py` | independent re-implementation of X-Wing in Python on top of OpenSSL-backed ML-KEM, X25519 via `cryptography` 50.0.2; Ed25519 and ML-DSA-65 verification by `cryptography`; both directions (Rust to Python, Python to Rust), 5 runs | match |
+| `tests/hybrid.rs` wiring tests | round trip, tamper in all modes, wrong recipient, both KEM halves bind the key, low-order point rejected, either signature half alone cannot pass, 2000 random mutations all rejected, malformed lengths never panic | pass |
 
-## Not covered / still required before any post-quantum claim
+Run: `cargo test --locked --features xwing-derand --test hybrid` and `python3 scripts/xcheck_hybrid.py`.
+Benchmarks: `cargo run --release --features pq-hybrid --example hybrid_bench` (evidence/hybrid-bench.txt, single machine, single run).
 
-- No independent audit or public cryptanalysis of the combiner or this code. The underlying crates say they are unaudited.
-- No constant-time or side-channel testing.
-- ACVP vectors do not cover the hybrid combination; no published test vectors exist for this exact combiner.
-- ML-DSA/ML-KEM implementations here are not FIPS-validated modules.
-- Obsidian R1 is still a composition baseline with a known nonce-reuse failure. Nothing in this layer changes its cipher claims.
-- Not wired into the WASM test bench (native only). Do not use for real secrets or keys.
+## Gates still open before any post-quantum claim
+
+1. No independent audit or public cryptanalysis of this layer. The dependencies say they are unaudited.
+2. No constant-time or side-channel testing (timing, cache, power). Not measured at all.
+3. The signature AND wiring has no written proof and no standard behind it.
+4. X-Wing is a draft, not an RFC. Its proof covers X-Wing, not this code; correctness here rests on test vectors and the Python cross-check.
+5. Implementations are not FIPS-validated modules.
+6. Obsidian R1, the cipher, still has a known nonce-reuse failure, loses to AES-256-GCM and XChaCha20-Poly1305 on speed and size, and has no public cryptanalysis. Post-quantum status of the cipher cannot be claimed from this layer.
+7. Not wired into the WASM test bench (native only). Do not use for real keys or secrets.
+8. No formal fuzzing campaign beyond the in-repo mutation test.
+
+Any wording stronger than "experimental hybrid layer built from NIST ML-KEM/ML-DSA and the X-Wing draft, unaudited" is not supported by this evidence.

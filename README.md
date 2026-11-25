@@ -23,7 +23,7 @@ Open localhost:8080. The site has no backend or persistent storage. It needs HTT
 
 ## Post-quantum key layer (optional, native)
 
-`cargo test --locked --features pq-hybrid` runs a hybrid X25519+ML-KEM-768 key establishment and Ed25519+ML-DSA-65 signature layer built from existing NIST-standard primitives, with NIST ACVP vectors. This is not a claim that Obsidian is post-quantum or secure. See research/POST-QUANTUM.md for exactly what is and is not claimed.
+`cargo test --locked --features xwing-derand` runs a hybrid key layer: X-Wing (X25519+ML-KEM-768, draft-connolly-cfrg-xwing-kem-11) and Ed25519+ML-DSA-65 signatures, with the draft vectors, NIST ACVP vectors and an independent Python cross-check. This is not a claim that Obsidian is post-quantum or secure. See research/POST-QUANTUM.md for exactly what is and is not claimed.
 
 ## Known failure
 

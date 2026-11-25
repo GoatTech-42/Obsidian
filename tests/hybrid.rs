@@ -1,4 +1,4 @@
-#![cfg(all(feature = "pq-hybrid", not(target_arch = "wasm32")))]
+#![cfg(all(feature = "xwing-derand", not(target_arch = "wasm32")))]
 //! Tests for the hybrid layer. NIST ACVP vectors check the ML-KEM-768 and ML-DSA-65 crates
 //! on this machine. The hybrid wiring tests check that our combination behaves.
 use ml_kem::{kem::Decapsulate, Ciphertext, DecapsulationKey, EncapsulationKey, KeyExport, MlKem768};
@@ -115,10 +115,10 @@ fn both_kem_halves_are_bound_into_the_key() {
     let (ct, k) = encapsulate(&sk.public_key()).unwrap();
     let (ct2, _) = encapsulate(&sk.public_key()).unwrap();
     let mut a = ct.clone();
-    a[..32].copy_from_slice(&ct2[..32]);
+    a[KEM_CT_LEN..].copy_from_slice(&ct2[KEM_CT_LEN..]);
     assert_ne!(sk.decapsulate(&a).map(|x| *x).ok(), Some(*k));
     let mut b = ct.clone();
-    b[32..].copy_from_slice(&ct2[32..]);
+    b[..KEM_CT_LEN].copy_from_slice(&ct2[..KEM_CT_LEN]);
     assert_ne!(sk.decapsulate(&b).map(|x| *x).ok(), Some(*k));
 }
 
@@ -126,7 +126,7 @@ fn both_kem_halves_are_bound_into_the_key() {
 fn low_order_x25519_point_rejected() {
     let sk = KemSecret::generate().unwrap();
     let (mut ct, _) = encapsulate(&sk.public_key()).unwrap();
-    ct[..32].fill(0);
+    ct[KEM_CT_LEN..].fill(0);
     assert_eq!(sk.decapsulate(&ct).err(), Some(HybridError::WeakPoint));
 }
 
@@ -147,4 +147,54 @@ fn signature_needs_both_halves() {
     assert!(verify(&vk, b"release 1.0", &dsa_bad).is_err(), "ml-dsa half must be required");
     let other = Signer::generate().unwrap();
     assert!(verify(&other.verifying_key(), b"release 1.0", &sig).is_err());
+}
+
+#[test]
+fn xwing_draft11_official_vectors() {
+    // draft-connolly-cfrg-xwing-kem-11 Appendix C / spec/test-vectors.json (3 vectors).
+    let v: Value = serde_json::from_str(include_str!("vectors/xwing-draft11.json")).unwrap();
+    let v = v.as_array().unwrap();
+    assert_eq!(v.len(), 3);
+    for c in v {
+        let seed: [u8; 32] = hx(c, "seed").try_into().unwrap();
+        let sk = KemSecret::from_seed(seed);
+        assert_eq!(sk.public_key(), hx(c, "pk"), "public key from seed");
+        let eseed: [u8; 64] = hx(c, "eseed").try_into().unwrap();
+        let (ct, ss) = encapsulate_derand(&hx(c, "pk"), &eseed).unwrap();
+        assert_eq!(ct, hx(c, "ct"), "ciphertext");
+        assert_eq!(ss.as_slice(), &hx(c, "ss")[..], "encapsulated shared secret");
+        assert_eq!(sk.decapsulate(&hx(c, "ct")).unwrap().as_slice(), &hx(c, "ss")[..], "decapsulated shared secret");
+    }
+}
+
+#[test]
+fn malformed_inputs_never_panic() {
+    let sk = KemSecret::generate().unwrap();
+    let pk = sk.public_key();
+    let s = Signer::generate().unwrap();
+    let vk = s.verifying_key();
+    let sig = s.sign(b"m").unwrap();
+    // Wrong lengths, truncations, all-zero and all-ff inputs, and a few thousand pseudo-random mutations.
+    for n in [0usize, 1, 31, 32, 33, KEM_CT_TOTAL - 1, KEM_CT_TOTAL, KEM_CT_TOTAL + 1, 4000] {
+        for fill in [0u8, 0xff] {
+            let b = vec![fill; n];
+            let _ = sk.decapsulate(&b);
+            let _ = open_from(&sk, &b);
+            let _ = encapsulate(&b);
+            let _ = verify(&b, b"m", &sig);
+            let _ = verify(&vk, b"m", &b);
+        }
+    }
+    let mut x: u64 = 0x9e3779b97f4a7c15;
+    let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
+    let good = seal_to(&pk, 1, b"payload").unwrap();
+    for _ in 0..2000 {
+        let mut m = good.clone();
+        for _ in 0..(1 + next() % 4) { let i = (next() as usize) % m.len(); m[i] ^= (next() % 255 + 1) as u8; }
+        assert!(open_from(&sk, &m).is_err(), "mutated message accepted");
+        let mut g = sig.clone();
+        let i = (next() as usize) % g.len();
+        g[i] ^= (next() % 255 + 1) as u8;
+        assert!(verify(&vk, b"m", &g).is_err(), "mutated signature accepted");
+    }
 }

@@ -1,8 +1,8 @@
-machine:  Intel(R) Xeon(R) 6975P-C, 1 vCPU, rustc 1.100.0 (0ef1bc386 2026-11-09), release, single run
+machine:  Intel(R) Xeon(R) 6975P-C, 1 vCPU, rustc 1.100.0 (0ef1bc386 2026-11-09), release, single run, X-Wing KEM
 sizes: kem_pk=1216 kem_ct=1120 sig=3373 vk=1984
-kem_keygen+pubkey,91.7us
-encapsulate,129.5us
-decapsulate,199.5us
-sign_keygen+vk,224.1us
-sign,1112.0us
-verify,187.5us
+kem_keygen+pubkey,91.8us
+encapsulate,127.3us
+decapsulate,198.0us
+sign_keygen+vk,223.2us
+sign,180.7us
+verify,188.4us
