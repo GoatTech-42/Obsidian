@@ -2,6 +2,23 @@
 
 Status: experimental, unaudited. Obsidian itself is NOT claimed to be post-quantum, secure, or better than AES-256-GCM or XChaCha20-Poly1305. This file says what the optional `pq-hybrid` layer does, what evidence exists, and which gates remain before any post-quantum claim could be made.
 
+## Claimed and not claimed (read this first)
+
+Claimed, with the evidence behind each:
+- `src/hybrid.rs` implements X-Wing (draft-connolly-cfrg-xwing-kem-11) and matches the draft's 3 official test vectors, and an independent Python re-implementation (OpenSSL-backed ML-KEM and X25519) agrees in both directions over 5 random runs.
+- The ML-KEM-768 and ML-DSA-65 crates reproduce NIST ACVP vectors on our machine (ML-KEM-768: 25 encapsulation, 10 decapsulation, 25 key generation; ML-DSA-65: 30 verification, of which 24 are expected rejects).
+- A hybrid signature is accepted only if both the Ed25519 half and the ML-DSA-65 half verify (tested by corrupting each half alone).
+- Parsers did not crash in about 8 minutes of libFuzzer and 2000 random mutations (a smoke test, not a campaign).
+
+Not claimed:
+- That Obsidian, its cipher, or R1 is post-quantum, secure, uncrackable, novel, or better than AES-256-GCM or XChaCha20-Poly1305. It is not shown to be any of these.
+- That this layer is audited, constant-time, side-channel resistant, FIPS-validated, or formally verified.
+- That the Ed25519 + ML-DSA-65 combination has a proof or a standard behind it.
+- That X-Wing is a published standard. It is an Independent Submission Internet-Draft with a paper-proof of its own, and that proof covers the construction, not this code.
+- That the raw `seal` API resists nonce reuse. It does not. The hybrid API avoids reuse by using a fresh key per message.
+
+Known limits: native only (not in the WASM bench), test keys only, no real secrets, and the open gates listed at the end of this file.
+
 ## Where the quantum risk actually is
 
 - A symmetric cipher with a 256-bit key is not the weak point. The best known quantum attack on symmetric keys (Grover) roughly halves the key bits, so 256 bits stays at about 128. That is true for AES-256 and for any well-designed 256-bit cipher. It says nothing about whether Obsidian R1 is a good cipher (it is not shown to be one, see SECURITY.md and ATTACKS.md).
