@@ -21,6 +21,10 @@ python3 -m http.server --directory web 8080 --bind 127.0.0.1
 
 Open localhost:8080. The site has no backend or persistent storage. It needs HTTPS or localhost for secure browser randomness. Only generated non-secret keys and test messages belong here. Reviewers can run the entire source in an isolated directory. No real credentials, account access, cloud resources or private data are required by the bench. Native tests are deterministic. Benchmarks run locally and must be labeled by machine/compiler/flags, not treated as universal.
 
+## Post-quantum key layer (optional, native)
+
+`cargo test --locked --features pq-hybrid` runs a hybrid X25519+ML-KEM-768 key establishment and Ed25519+ML-DSA-65 signature layer built from existing NIST-standard primitives, with NIST ACVP vectors. This is not a claim that Obsidian is post-quantum or secure. See research/POST-QUANTUM.md for exactly what is and is not claimed.
+
 ## Known failure
 
 ```sh

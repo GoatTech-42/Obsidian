@@ -165,3 +165,6 @@ pub fn decrypt(key: Vec<u8>, envelope: Vec<u8>) -> Result<Vec<u8>, JsValue> {
     let key = Zeroizing::new(key);
     open(&key, &envelope).map_err(|e| JsValue::from_str(&format!("{e:?}")))
 }
+
+#[cfg(all(feature = "pq-hybrid", not(target_arch = "wasm32")))]
+pub mod hybrid;
